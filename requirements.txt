@@ -1,4 +1,6 @@
 Django==1.7
+requests
 
 flake8
 ipython
+mock
