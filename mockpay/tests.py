@@ -31,28 +31,36 @@ class ViewsTests(SimpleTestCase):
     def test_entry_requirements_valid(self, requests):
         """A successful POST from the browser should result in a POST to the
         configured url with the provided agency_/tracking_id"""
-        mock_info = {"AGENCY": {"DEFAULT": "exexex"}}
-        with self.settings(CALLBACK_URLS=mock_info):
+        mock_config = {"AGENCY": {"transaction_url": "exexex"}}
+        with self.settings(AGENCY_CONFIG=mock_config):
             message = {'agency_id': 'AGENCY', 'agency_tracking_id': 'TRA'}
             self.client.post(reverse('entry'), message)
             self.assertTrue(requests.post.called)
             self.assertEqual(requests.post.call_args[0][0], 'exexex')
             self.assertEqual(requests.post.call_args[1]['data'], message)
 
-    def test_lookup_callback_url(self):
-        """We should only get callback info if the agency_id and app match, or
-        there is no app"""
-        mock_info = {"AGENCY": {"ANAPP": "http://example.com/",
-                                "DEFAULT": "http://example.gov/"}}
-        with self.settings(CALLBACK_URLS=mock_info):
-            self.assertEqual(views.lookup_callback_url("other_agency", None),
+    def test_lookup_config(self):
+        """Fetching a key should first look in the app info and cascade up"""
+        mock_config = {"AGENCY": {"key_a": "value_1", "key_b": "value_2",
+                                  "apps": {"APPNAME": {"key_b": "value_3"}}}}
+        with self.settings(AGENCY_CONFIG=mock_config):
+            #   Agency not present in config
+            self.assertEqual(views.lookup_config("key_b", "other", None),
                              None)
-            self.assertEqual(views.lookup_callback_url("AGENCY", "NONAPP"),
+            #   App not present in config
+            self.assertEqual(views.lookup_config("key_b", "AGENCY", "NONAPP"),
                              None)
-            self.assertEqual(views.lookup_callback_url("AGENCY", "ANAPP"),
-                             "http://example.com/")
-            self.assertEqual(views.lookup_callback_url("AGENCY", None),
-                             "http://example.gov/")
+            #   Key not present in config
+            self.assertEqual(views.lookup_config("key_z", "AGENCY", "APPNAME"),
+                             None)
+            #   App overrides Agency setting
+            self.assertEqual(views.lookup_config("key_b", "AGENCY", "APPNAME"),
+                             "value_3")
+            #   Falls back to Agency setting
+            self.assertEqual(views.lookup_config("key_a", "AGENCY", "APPNAME"),
+                             "value_1")
+            self.assertEqual(views.lookup_config("key_b", "AGENCY", None),
+                             "value_2")
 
     def test_clean_agency_response_errors(self):
         """This function should return error strings if given XML, duplicate

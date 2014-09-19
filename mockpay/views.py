@@ -15,8 +15,9 @@ def entry(request):
     elif not request.POST.get('agency_tracking_id'):
         return HttpResponseBadRequest('Needs agency_tracking_id')
     else:
-        url = lookup_callback_url(request.POST['agency_id'],
-                                  request.POST.get('app_name'))
+        url = lookup_config("transaction_url",
+                            request.POST['agency_id'],
+                            request.POST.get('app_name'))
         if not url:
             return HttpResponseBadRequest(
                 'agency_id + app_name cannot be found in settings')
@@ -31,15 +32,19 @@ def entry(request):
                 return generate_form(request, agency_response)
 
 
-def lookup_callback_url(agency_id, app_name=None):
-    """Callbacks (from mockpay to the client app) are configured in the
-    settings file. An app_name of None indicates that we should use the
-    "DEFAULT" key"""
-    if agency_id in settings.CALLBACK_URLS:
-        if app_name is None:
-            app_name = 'DEFAULT'
-        if app_name in settings.CALLBACK_URLS[agency_id]:
-            return settings.CALLBACK_URLS[agency_id][app_name]
+def lookup_config(key, agency_id, app_name=None):
+    """Agency-level configurations can be overridden by app-level
+    configurations. If app_name is None, rely on agency information"""
+    config = settings.AGENCY_CONFIG
+    if agency_id in config:
+        if app_name is not None:
+            if app_name not in config[agency_id]["apps"]:
+                return None     # No such app
+            if key in config[agency_id]["apps"][app_name]:
+                # Use app config
+                return config[agency_id]["apps"][app_name][key]
+        # Default to agency-wide config
+        return config[agency_id].get(key)
 
 
 def clean_agency_response(response_str):
