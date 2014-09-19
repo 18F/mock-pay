@@ -39,28 +39,35 @@ class ViewsTests(SimpleTestCase):
             self.assertEqual(requests.post.call_args[0][0], 'exexex')
             self.assertEqual(requests.post.call_args[1]['data'], message)
 
-    def test_clean_agency_response_errors(self):
+    def test_agency_response_to_dict(self):
         """This function should return error strings if given XML, duplicate
-        keys, missing value, unknown keys, or not given a required key"""
-        inputs = ["<xml>",
-                  "key=value\nkey=other value",
-                  "unexplained string",
-                  "key=   ",
-                  "action=value\npayment_type=value",
-                  "protocol_version=1\nresponse_message=2\naction=3\n"
-                  + "form_id=4\nagency_tracking_id=5\nother_key=6"]
+        keys, or missing keys. Otherwise, we should parse a nice dictionary"""
         responses = set()
-        for response_str in inputs:
-            clean = views.clean_agency_response(response_str)
-            self.assertTrue(isinstance(clean, str))
-            responses.add(clean)
-        # they should all have provided different error messages
-        self.assertEqual(len(responses), len(inputs))
+
+        clean = views.agency_response_to_dict("<xml>")
+        self.assertTrue(isinstance(clean, str))
+        responses.add(clean)
+
+        clean = views.agency_response_to_dict("key=value\nkey=other")
+        self.assertTrue(isinstance(clean, str))
+        responses.add(clean)
+
+        clean = views.agency_response_to_dict("key=")
+        self.assertTrue(isinstance(clean, str))
+        responses.add(clean)
+
+        self.assertEqual(len(responses), 3)     # different error messages
+
+        clean = views.agency_response_to_dict("key1=value1\nkey2=value2\r\n"
+                                              + "key3=value3")
+        self.assertEqual(clean, {"key1": "value1", "key2": "value2",
+                                 "key3": "value3"})
 
     def test_generate_form_no_form(self):
         """The form is looked up; if it's not present, we get an error"""
         with self.settings(FORM_CONFIGS={"111": []}):
-            response = views.generate_form(None, {"form_id": "2222"})
+            response = views.generate_form(None, None, None,
+                                           {"form_id": "2222"})
             self.assertEqual(response.status_code, 400)
 
     def test_generate_form(self):
@@ -70,13 +77,44 @@ class ViewsTests(SimpleTestCase):
                           {"name": "field3", "status": "hidden"}]}
         params = {"form_id": "111", "field2": "value2", "field4": "value4"}
         with self.settings(FORM_CONFIGS=config):
-            response = views.generate_form(None, params)
+            response = views.generate_form(None, "AGE", "APP", params)
+            self.assertContains(response, "agency_id")
+            self.assertContains(response, "AGE")
+            self.assertContains(response, "app_name")
+            self.assertContains(response, "APP")
             self.assertContains(response, "field1")
             self.assertContains(response, "field2")
             self.assertContains(response, "field3")
             self.assertContains(response, "value2")
             self.assertNotContains(response, "field4")
             self.assertNotContains(response, "value4")
+
+    @patch('mockpay.views.send_status_to_agency')
+    def test_exit_redirect(self, send_status_to_agency):
+        """Test first a successful redirect, then a canceled redirect, then an
+        error redirect (bad info from the agency server"""
+        send_status_to_agency.return_value = {'response_message': 'OK'}
+        data = {'failure_return_url': 'FFFF', 'success_return_url': 'SSSS',
+                'agency_id': 'AGAGAG'}
+        response = self.client.post(reverse('redirect'), data=data)
+        self.assertNotContains(response, 'FFFF')
+        self.assertContains(response, 'SSSS')
+
+        data['cancel'] = 'Cancel'
+        response = self.client.post(reverse('redirect'), data=data)
+        self.assertContains(response, 'FFFF')
+        self.assertNotContains(response, 'SSSS')
+
+        del data['cancel']
+        send_status_to_agency.return_value = "error occurred"
+        response = self.client.post(reverse('redirect'), data=data)
+        self.assertContains(response, 'FFFF')
+        self.assertNotContains(response, 'SSSS')
+
+        send_status_to_agency.return_value = {'response_message': 'Error'}
+        response = self.client.post(reverse('redirect'), data=data)
+        self.assertContains(response, 'FFFF')
+        self.assertNotContains(response, 'SSSS')
 
 
 class AccessSettingsTests(SimpleTestCase):
@@ -113,24 +151,21 @@ class AccessSettingsTests(SimpleTestCase):
                 access_settings.lookup_config("key_b", "AGENCY", None),
                 "value_2")
 
-    def test_clean_agency_response(self):
-        """Example of a successful input-string-to-dictionary conversion as
-        all required (and some optional) fields are present. Tests various
-        line endings"""
-        input_str = ("action=SubmitCollectionInteractive\n"
-                     + "payment_amount=20.25\r\n"
-                     + "form_id=123\r"
-                     + "payer_name=Bob Smith\n"
-                     + "agency_tracking_id=090909\n"
-                     + "protocol_version=3.2\n"
-                     + "response_message=Success")
-        clean = access_settings.clean_agency_response(input_str)
-        self.assertEqual(clean, {
-            "action": "SubmitCollectionInteractive",
-            "payment_amount": "20.25",
-            "form_id": "123",
-            "payer_name": "Bob Smith",
-            "agency_tracking_id": "090909",
-            "protocol_version": "3.2",
-            "response_message": "Success"
-        })
+    def test_clean_response(self):
+        """Verify that required fields must be present, and that no additional
+        fields are accepted"""
+        nodata = access_settings.clean_response({})
+        self.assertTrue(isinstance(nodata, str))
+
+        data = {'protocol_version': 'pv', 'response_message': 'rm',
+                'action': 'a', 'form_id': 'fi', 'agency_tracking_id': 'ati',
+                'invalid_field': 'if'}
+        new_field = access_settings.clean_response(data)
+        self.assertTrue(isinstance(new_field, str))
+        self.assertNotEqual(nodata, new_field)  # different errors
+
+        del(data['invalid_field'])
+        data['payment_amount'] = '20.25'
+        result = access_settings.clean_response(data)
+        self.assertEqual(data, result)
+        self.assertNotEqual(id(data), id(result))
