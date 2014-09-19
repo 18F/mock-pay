@@ -2,7 +2,7 @@ from django.core.urlresolvers import reverse
 from django.test import SimpleTestCase
 from mock import patch
 
-from mockpay import views
+from mockpay import views, access_settings
 
 
 class ViewsTests(SimpleTestCase):
@@ -39,29 +39,6 @@ class ViewsTests(SimpleTestCase):
             self.assertEqual(requests.post.call_args[0][0], 'exexex')
             self.assertEqual(requests.post.call_args[1]['data'], message)
 
-    def test_lookup_config(self):
-        """Fetching a key should first look in the app info and cascade up"""
-        mock_config = {"AGENCY": {"key_a": "value_1", "key_b": "value_2",
-                                  "apps": {"APPNAME": {"key_b": "value_3"}}}}
-        with self.settings(AGENCY_CONFIG=mock_config):
-            #   Agency not present in config
-            self.assertEqual(views.lookup_config("key_b", "other", None),
-                             None)
-            #   App not present in config
-            self.assertEqual(views.lookup_config("key_b", "AGENCY", "NONAPP"),
-                             None)
-            #   Key not present in config
-            self.assertEqual(views.lookup_config("key_z", "AGENCY", "APPNAME"),
-                             None)
-            #   App overrides Agency setting
-            self.assertEqual(views.lookup_config("key_b", "AGENCY", "APPNAME"),
-                             "value_3")
-            #   Falls back to Agency setting
-            self.assertEqual(views.lookup_config("key_a", "AGENCY", "APPNAME"),
-                             "value_1")
-            self.assertEqual(views.lookup_config("key_b", "AGENCY", None),
-                             "value_2")
-
     def test_clean_agency_response_errors(self):
         """This function should return error strings if given XML, duplicate
         keys, missing value, unknown keys, or not given a required key"""
@@ -79,28 +56,6 @@ class ViewsTests(SimpleTestCase):
             responses.add(clean)
         # they should all have provided different error messages
         self.assertEqual(len(responses), len(inputs))
-
-    def test_clean_agency_response(self):
-        """Example of a successful input-string-to-dictionary conversion as
-        all required (and some optional) fields are present. Tests various
-        line endings"""
-        input_str = ("action=SubmitCollectionInteractive\n"
-                     + "payment_amount=20.25\r\n"
-                     + "form_id=123\r"
-                     + "payer_name=Bob Smith\n"
-                     + "agency_tracking_id=090909\n"
-                     + "protocol_version=3.2\n"
-                     + "response_message=Success")
-        clean = views.clean_agency_response(input_str)
-        self.assertEqual(clean, {
-            "action": "SubmitCollectionInteractive",
-            "payment_amount": "20.25",
-            "form_id": "123",
-            "payer_name": "Bob Smith",
-            "agency_tracking_id": "090909",
-            "protocol_version": "3.2",
-            "response_message": "Success"
-        })
 
     def test_generate_form_no_form(self):
         """The form is looked up; if it's not present, we get an error"""
@@ -122,3 +77,60 @@ class ViewsTests(SimpleTestCase):
             self.assertContains(response, "value2")
             self.assertNotContains(response, "field4")
             self.assertNotContains(response, "value4")
+
+
+class AccessSettingsTests(SimpleTestCase):
+    def test_lookup_config(self):
+        """Fetching a key should first look in the app info and cascade up"""
+        mock_config = {"AGENCY": {"key_a": "value_1", "key_b": "value_2",
+                                  "apps": {"APPNAME": {"key_b": "value_3"}}}}
+        with self.settings(AGENCY_CONFIG=mock_config):
+            #   Agency not present in config
+            self.assertEqual(
+                access_settings.lookup_config("key_b", "other", None), None)
+            #   App not present in config
+            self.assertEqual(
+                access_settings.lookup_config("key_b", "AGENCY", "NONAPP"),
+                None)
+            #   Key not present in config
+            self.assertEqual(
+                access_settings.lookup_config("key_z", "AGENCY", "APPNAME"),
+                None)
+            #   App overrides Agency setting
+            self.assertEqual(
+                access_settings.lookup_config("key_b", "AGENCY", "APPNAME"),
+                "value_3")
+            #   Final parameter overrides everything
+            self.assertEqual(
+                access_settings.lookup_config("key_b", "AGENCY", "APPNAME",
+                                              {"key_b": "value_10"}),
+                "value_10")
+            #   Falls back to Agency setting
+            self.assertEqual(
+                access_settings.lookup_config("key_a", "AGENCY", "APPNAME"),
+                "value_1")
+            self.assertEqual(
+                access_settings.lookup_config("key_b", "AGENCY", None),
+                "value_2")
+
+    def test_clean_agency_response(self):
+        """Example of a successful input-string-to-dictionary conversion as
+        all required (and some optional) fields are present. Tests various
+        line endings"""
+        input_str = ("action=SubmitCollectionInteractive\n"
+                     + "payment_amount=20.25\r\n"
+                     + "form_id=123\r"
+                     + "payer_name=Bob Smith\n"
+                     + "agency_tracking_id=090909\n"
+                     + "protocol_version=3.2\n"
+                     + "response_message=Success")
+        clean = access_settings.clean_agency_response(input_str)
+        self.assertEqual(clean, {
+            "action": "SubmitCollectionInteractive",
+            "payment_amount": "20.25",
+            "form_id": "123",
+            "payer_name": "Bob Smith",
+            "agency_tracking_id": "090909",
+            "protocol_version": "3.2",
+            "response_message": "Success"
+        })

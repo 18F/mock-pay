@@ -1,55 +1,74 @@
 from copy import deepcopy
 
 from django.conf import settings
-from django.http import HttpResponseBadRequest, HttpResponseNotAllowed
+from django.http import HttpResponseBadRequest
+from django.views.decorators.http import require_POST
 from django.shortcuts import render
 import requests
 
+from mockpay.access_settings import clean_response, clean_callback
+from mockpay.access_settings import lookup_config
 
+
+@require_POST
 def entry(request):
     """Browser is POSTed to here to initiate a payment"""
-    if request.method != "POST":
-        return HttpResponseNotAllowed(['POST'])
-    elif not request.POST.get('agency_id'):
+    agency_id = request.POST.get('agency_id')
+    app_name = request.POST.get('app_name')
+    if not agency_id:
         return HttpResponseBadRequest('Needs agency_id')
     elif not request.POST.get('agency_tracking_id'):
         return HttpResponseBadRequest('Needs agency_tracking_id')
     else:
-        url = lookup_config("transaction_url",
-                            request.POST['agency_id'],
-                            request.POST.get('app_name'))
+        url = lookup_config("transaction_url", agency_id, app_name)
         if not url:
             return HttpResponseBadRequest(
                 'agency_id + app_name cannot be found in settings')
         else:
-            data = {'agency_id': request.POST['agency_id'],
+            data = {'agency_id': agency_id,
                     'agency_tracking_id': request.POST['agency_tracking_id']}
             agency_response = requests.post(url, data=data)
-            agency_response = clean_agency_response(agency_response.text)
+            agency_response = agency_response_to_dict(agency_response.text)
+            if isinstance(agency_response, dict):
+                agency_response = clean_response(agency_response)
             if isinstance(agency_response, str):
                 return HttpResponseBadRequest(agency_response)
             else:
-                return generate_form(request, agency_response)
+                return generate_form(request, agency_id, app_name,
+                                     agency_response)
 
 
-def lookup_config(key, agency_id, app_name=None):
-    """Agency-level configurations can be overridden by app-level
-    configurations. If app_name is None, rely on agency information"""
-    config = settings.AGENCY_CONFIG
-    if agency_id in config:
+def generate_form(request, agency_id, app_name, cleaned_params):
+    """Generate an HTML form of payment/user information. To do this, lookup
+    the form configuration in the settings."""
+    form_id = cleaned_params['form_id']
+    if form_id not in settings.FORM_CONFIGS:
+        return HttpResponseBadRequest("could not find form " + form_id)
+    else:
+        form = deepcopy(settings.FORM_CONFIGS[form_id])
+        #   always include these system fields
+        form.append({'name': 'agency_id', 'status': 'hidden',
+                     'value': agency_id})
         if app_name is not None:
-            if app_name not in config[agency_id]["apps"]:
-                return None     # No such app
-            if key in config[agency_id]["apps"][app_name]:
-                # Use app config
-                return config[agency_id]["apps"][app_name][key]
-        # Default to agency-wide config
-        return config[agency_id].get(key)
+            form.append({'name': 'app_name', 'status': 'hidden',
+                         'value': app_name})
+        for field in ('agency_tracking_id', 'collection_results_url',
+                      'success_return_url', 'failure_return_url'):
+            if field not in form and field in cleaned_params:
+                form.append({'name': field, 'status': 'hidden'})
+
+        #   insert values given by the callback url
+        for field in form:
+            if field["name"] in cleaned_params:
+                field["value"] = cleaned_params[field["name"]]
+        #   @todo: account for allow_amount_change and
+        #   show_confirmation_screen
+        return render(request, "mockpay/form.html", {"form": form})
 
 
-def clean_agency_response(response_str):
-    """The agency's response contains many key-value pairs. Turn them into a
-    dict and validate the result or return an error string"""
+def agency_response_to_dict(response_str):
+    """Agency responses contain many key-value pairs. Turn them into a
+    dict."""
     if response_str[:1] == "<":
         #   @TODO
         return "mock-pay does not currently support xml"
@@ -64,47 +83,41 @@ def clean_agency_response(response_str):
                 return "no value for key: " + key
             else:
                 mapping[key] = pair[1]
-
-        required = ['protocol_version', 'response_message', 'action',
-                    'form_id', 'agency_tracking_id']
-        # @todo: payment_type (required if account data is presented)
-        optional = [
-            'payment_type', 'collection_results_url', 'success_return_url',
-            'failure_return_url', 'show_confirmation_screen',
-            'allow_account_data_change', 'allow_amount_change',
-            'allow_date_change', 'allow_recurring_data_change',
-            'return_account_id_data', 'agency_memo', 'payment_amount',
-            'credit_card_transaction_type', 'paygov_tracking_id', 'order_id',
-            'order_tax_amount', 'order_level3_data', 'payment_date',
-            'recur_frequency', 'recur_count', 'payer_name', 'bank_name',
-            'bank_account_type', 'bank_account_number', 'check_type',
-            'check_micr_line', 'credit_card_number',
-            'credit_card_expiration_date', 'card_security_code',
-            'billing_address', 'billing_city', 'billing_state', 'billing_zip',
-            'custom_field_1', 'custom_field_2', 'custom_field_3',
-            'custom_field_4', 'custom_field_5', 'custom_field_6',
-            'custom_field_7', 'custom_field_8', 'custom_field_9',
-            'custom_field_10', 'custom_field_11', 'custom_field_12']
-
-        for key in required:
-            if not mapping.get(key):
-                return "missing required key: " + key
-        for key in mapping:
-            if key not in required and key not in optional:
-                return "unknown key: " + key
-
         return mapping
 
 
-def generate_form(request, cleaned_params):
-    """Generate an HTML form of payment/user information. To do this, lookup
-    the form configuration in the settings."""
-    form_id = cleaned_params['form_id']
-    if form_id not in settings.FORM_CONFIGS:
-        return HttpResponseBadRequest("could not find form " + form_id)
+@require_POST
+def exit_redirect(request):
+    """Browser POST to here with their credit card info. Redirect as needed"""
+    agency_id = request.POST['agency_id']
+    app_name = request.POST.get('app_name')
+    canceled = request.POST.get('cancel')
+    agency_response = send_status_to_agency(request, agency_id, app_name)
+    if (not isinstance(agency_response, dict)
+            or agency_response.get('response_message') != 'OK'):
+        canceled = True
+    if canceled:
+        url_key = 'failure_return_url'
     else:
-        form = deepcopy(settings.FORM_CONFIGS[form_id])
-        for field in form:
-            if field["name"] in cleaned_params:
-                field["value"] = cleaned_params[field["name"]]
-        return render(request, "mockpay/form.html", {"form": form})
+        url_key = 'success_return_url'
+    redirect_to = lookup_config(url_key, agency_id, app_name,
+                                request.POST)
+    return render(request, "mockpay/redirect.html", {
+        "agency_id": agency_id, "redirect_url": redirect_to,
+        "agency_tracking_id": request.POST.get('agency_tracking_id')})
+
+
+def send_status_to_agency(request, agency_id, app_name):
+    """As part of the exit redirect, we need to tell the agency what the
+    outcome was."""
+    canceled = request.POST.get('cancel')
+    callback_data = deepcopy(request.POST)
+    if canceled:
+        callback_data['payment_status'] = 'Canceled'
+    else:
+        callback_data['payment_status'] = 'Success'
+    callback_data = clean_callback(callback_data)
+    callback_url = lookup_config("collection_results_url", agency_id,
+                                 app_name, request.POST)
+    agency_response = requests.post(callback_url, data=callback_data)
+    return agency_response_to_dict(agency_response.text)

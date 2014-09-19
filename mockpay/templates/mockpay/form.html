@@ -1,7 +1,7 @@
 <html>
 <head><title>Mock Pay!</title></head>
 <body>
-  <form>
+  <form method="POST" action="{% url 'redirect' %}">
     {% for field in form %}
       {% if field.status != 'editable' %}
         <input type="hidden" name="{{field.name}}" value="{{field.value}}" />
@@ -14,6 +14,8 @@
       {% endif %}
       <br />
     {% endfor %}
+    <p>Pretend you entered card information</p>
+    <input type="submit" /><input type="submit" name="cancel" value="Cancel" />
   </form>
 </body>
 </html>
