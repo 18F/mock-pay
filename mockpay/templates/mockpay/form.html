@@ -1,0 +1,19 @@
+<html>
+<head><title>Mock Pay!</title></head>
+<body>
+  <form>
+    {% for field in form %}
+      {% if field.status != 'editable' %}
+        <input type="hidden" name="{{field.name}}" value="{{field.value}}" />
+        {% if field.status == 'locked' %}
+        {{field.name}}: {{field.value}}
+        {% endif %}
+      {% else %}
+        {{field.name}}:
+        <input type="text" name="{{field.name}}" value="{{field.value}}" />
+      {% endif %}
+      <br />
+    {% endfor %}
+  </form>
+</body>
+</html>

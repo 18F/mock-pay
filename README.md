@@ -49,16 +49,23 @@ pip install -r requirements.txt
 
 While the app can be ran out of the box, it won't have any applications to use
 (i.e. you will always get a 400 when making requests). To remedy this, create
-a `local_settings.py` file inside `mockpay/settings` and include in it a
-`CALLBACK_INFO` variable. See `mockpay/settings/base.py` for more, but here is
-an example:
+a `local_settings.py` file inside `mockpay/settings` and include in it
+`CALLBACK_URLS` and `FORM_CONFIGS` variables. See `mockpay/settings/base.py`
+for more, but here is an example:
 
 ```python
 CALLBACK_INFO = {
     "FBI": {
-        "FINGERPRINTS": {"form_id": 11111,
-                         "url": "http://fbi.gov/fingerprint-callback"},
-        "DEFAULT": {"form_id": 222, "url": "http://fbi.gov/other-moneys"}
+        "FINGERPRINTS": "http://fbi.gov/fingerprint-callback",
+        "DEFAULT": "http://fbi.gov/other-moneys"
     }
+}
+FORM_CONFIGS = {
+    "1111": [{"name": "payer_name", "status": "editable"},
+              {"name": "payment_amount", "status": "locked"},
+              {"name": "billing_address", "status": "editable"},
+              {"name": "billing_city", "status": "editable"},
+              {"name": "billing_state", "status": "editable"},
+              {"name": "billing_zip", "status": "editable"}]
 }
 ```
