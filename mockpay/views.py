@@ -36,7 +36,7 @@ def lookup_callback_url(agency_id, app_name=None):
     settings file. An app_name of None indicates that we should use the
     "DEFAULT" key"""
     if agency_id in settings.CALLBACK_URLS:
-        if not app_name:
+        if app_name is None:
             app_name = 'DEFAULT'
         if app_name in settings.CALLBACK_URLS[agency_id]:
             return settings.CALLBACK_URLS[agency_id][app_name]
