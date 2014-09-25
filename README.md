@@ -50,14 +50,21 @@ pip install -r requirements.txt
 While the app can be ran out of the box, it won't have any applications to use
 (i.e. you will always get a 400 when making requests). To remedy this, create
 a `local_settings.py` file inside `mockpay/settings` and include in it
-`CALLBACK_URLS` and `FORM_CONFIGS` variables. See `mockpay/settings/base.py`
+`AGENCY_CONFIG` and `FORM_CONFIGS` variables. See `mockpay/settings/base.py`
 for more, but here is an example:
 
 ```python
-CALLBACK_INFO = {
+AGENCY_CONFIG= {
     "FBI": {
-        "FINGERPRINTS": "http://fbi.gov/fingerprint-callback",
-        "DEFAULT": "http://fbi.gov/other-moneys"
+        "transaction_url": "http://fbi.gov/transaction-default",
+        "collection_results_url": "http://fbi.gov/transaction-complete",
+        "success_return_url": "http://fbi.gov/happy-path",
+        "failure_return_url": "http://fbi.gov/error-path",
+        "apps": {
+            "FINGERPRINTS": {
+                "success_return_url": "http://fbi.gov/fp-success"
+            }
+        }
     }
 }
 FORM_CONFIGS = {
