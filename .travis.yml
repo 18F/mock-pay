@@ -1,7 +1,9 @@
 language: python
 python:
-    - "3.4"
+- '3.4'
 install:
-    - pip install -r requirements.txt --use-mirrors
+- pip install -r requirements.txt --use-mirrors
 script:
-    - python manage.py test
+- python manage.py test
+notifications:
+  webhooks: http://project-monitor.cf.18f.us/projects/mock-pay/status
